@@ -865,6 +865,15 @@ class KlipperScreen(Gtk.ApplicationWindow):
             self.panels["printer_select"].disconnected_callback()
             self.state.connecting = False
             return
+        if "network" in self._cur_panels:
+            # WiFi/network setup doesn't depend on Klipper or the MCU at
+            # all - kicking the user back to the splash screen every time
+            # the printer connection cycles (e.g. no MCU attached yet,
+            # which is exactly when someone is most likely to be trying
+            # to configure WiFi in the first place) makes it effectively
+            # impossible to ever finish network setup.
+            self.state.connecting = False
+            return
 
         message = _("Connecting to %s") % self.state.printer_name
         if self.last_error:
