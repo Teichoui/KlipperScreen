@@ -6,7 +6,6 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk, Pango
 
-from ks_includes.functions import get_current_timezone, list_timezones, set_timezone
 from ks_includes.screen_panel import ScreenPanel
 
 
@@ -233,15 +232,6 @@ class Panel(ScreenPanel):
         self.grid.attach(self.labels["date"], 1, self.current_row - 1, 1, 1)
         self.add_label_to_grid("", 0)
 
-        # timezone
-        self.add_label_to_grid(_("Timezone"), 0, bold=True)
-        tz_button = self._gtk.Button(
-            "settings", get_current_timezone() or _("Set Timezone"), "color3"
-        )
-        tz_button.connect("clicked", self.open_timezone_dialog)
-        self.grid.attach(tz_button, 1, self.current_row - 1, 1, 1)
-        self.add_label_to_grid("", 0)
-
         # backend
         self.add_label_to_grid(self.prettify("backend"), 0, bold=True)
         self.labels["backend"] = Gtk.Label(label="", xalign=0)
@@ -315,49 +305,5 @@ class Panel(ScreenPanel):
 
         now = datetime.datetime.now().astimezone()
         self.labels["date"].set_label(now.strftime("%a %b %e %H:%M:%S %Z %Y"))
-
-    def open_timezone_dialog(self, widget):
-        timezones = list_timezones()
-        if not timezones:
-            self._screen.show_popup_message(_("Unable to retrieve timezone list"))
-            return
-
-        current = get_current_timezone()
-
-        combo = Gtk.ComboBoxText()
-        combo.set_hexpand(True)
-        active_index = 0
-        for i, tz in enumerate(timezones):
-            combo.append_text(tz)
-            if tz == current:
-                active_index = i
-        combo.set_active(active_index)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        label = Gtk.Label(label=_("Select your timezone"), wrap=True, hexpand=True)
-        box.pack_start(label, False, False, 0)
-        box.pack_start(combo, False, False, 0)
-
-        buttons = [
-            {"name": _("Set"), "response": Gtk.ResponseType.OK, "style": "dialog-info"},
-            {"name": _("Cancel"), "response": Gtk.ResponseType.CANCEL, "style": "dialog-error"},
-        ]
-        self._gtk.Dialog(_("Timezone"), buttons, box, self.timezone_dialog_response, combo)
-
-    def timezone_dialog_response(self, dialog, response_id, combo):
-        self._gtk.remove_dialog(dialog)
-        if response_id != Gtk.ResponseType.OK:
-            return
-        tz = combo.get_active_text()
-        if not tz:
-            return
-        ret, err = set_timezone(tz)
-        if ret != 0:
-            self._screen.show_popup_message(
-                _("Failed to set timezone") + f": {err if err else f'exit code {ret}'}"
-            )
-            return
-        self._screen.show_popup_message(_("Timezone set to") + f" {tz}", level=1)
-        self._screen.panels_reinit.append("system")
 
         self.labels["backend"].set_label(self.backend)
