@@ -127,7 +127,18 @@ class SdbusNm:
         for path in self.nm.get_devices():
             dev = NetworkDeviceGeneric(path)
             if dev.device_type == enums.DeviceType.WIFI:
-                wireless_interfaces.append(NetworkDeviceWireless(path))
+                # Some WiFi chipsets expose a virtual p2p0 (WiFi-Direct)
+                # device alongside the real wlan0 adapter. NetworkManager
+                # deliberately leaves p2p0 unmanaged, so it can never
+                # actually be controlled here - including it just means
+                # it can get picked as the "first" wireless interface
+                # instead of the real, usable one, producing a false
+                # "not managed by NetworkManager" error even though a
+                # perfectly good managed WiFi adapter is also present.
+                wireless_dev = NetworkDeviceWireless(path)
+                if wireless_dev.state == enums.DeviceState.UNMANAGED:
+                    continue
+                wireless_interfaces.append(wireless_dev)
         return wireless_interfaces
 
     def get_all_network_devices(self):
