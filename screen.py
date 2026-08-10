@@ -1219,7 +1219,16 @@ class KlipperScreen(Gtk.ApplicationWindow):
         if self.state.reinit_count > self.MAX_RETRIES or "printer_select" in self._cur_panels:
             logging.info("Stopping Retries")
             return False
-        first_try = self.state.reinit_count == 0
+        # reinit_count gets reset to 0 in several places (socket_connected,
+        # state_disconnected, etc.) whenever a brief/partial connection
+        # succeeds, even if it dies again moments later. Relying on it alone
+        # to decide whether to skip the retry delay means a connection that
+        # keeps flapping (e.g. Klipper stuck unable to reach its MCU) can
+        # defeat the backoff entirely and hammer reconnects with no delay.
+        # Track whether we've EVER attempted a connection this session
+        # instead, so only the true first attempt skips the wait.
+        first_try = self.state.reinit_count == 0 and not getattr(self, "_ks_attempted_connect", False)
+        self._ks_attempted_connect = True
         self.state.reinit_count += 1
         if self._ws.connected and not self._ws.closing:
             action = self.init_klipper
