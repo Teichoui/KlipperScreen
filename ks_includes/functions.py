@@ -192,3 +192,48 @@ def run_systemctl(action):
         return -1, "Command timed out after 30 seconds"
     except Exception as e:
         return -1, str(e)
+
+
+def list_timezones():
+    try:
+        result = subprocess.run(
+            ["timedatectl", "list-timezones"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return []
+        return [line for line in result.stdout.splitlines() if line.strip()]
+    except Exception:
+        logging.exception("Failed to list timezones")
+        return []
+
+
+def get_current_timezone():
+    try:
+        result = subprocess.run(
+            ["timedatectl", "show", "--property=Timezone", "--value"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+    except Exception:
+        logging.exception("Failed to get current timezone")
+        return None
+
+
+def set_timezone(tz):
+    try:
+        result = subprocess.run(
+            ["timedatectl", "set-timezone", tz],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode, result.stderr.strip() if result.stderr else ""
+    except subprocess.TimeoutExpired:
+        return -1, "Command timed out after 10 seconds"
+    except Exception as e:
+        return -1, str(e)
