@@ -124,22 +124,27 @@ class SdbusNm:
 
     def get_wireless_interfaces(self):
         wireless_interfaces = []
+        managed_interfaces = []
         for path in self.nm.get_devices():
             dev = NetworkDeviceGeneric(path)
             if dev.device_type == enums.DeviceType.WIFI:
-                # Some WiFi chipsets expose a virtual p2p0 (WiFi-Direct)
-                # device alongside the real wlan0 adapter. NetworkManager
-                # deliberately leaves p2p0 unmanaged, so it can never
-                # actually be controlled here - including it just means
-                # it can get picked as the "first" wireless interface
-                # instead of the real, usable one, producing a false
-                # "not managed by NetworkManager" error even though a
-                # perfectly good managed WiFi adapter is also present.
                 wireless_dev = NetworkDeviceWireless(path)
-                if wireless_dev.state == enums.DeviceState.UNMANAGED:
-                    continue
                 wireless_interfaces.append(wireless_dev)
-        return wireless_interfaces
+                if wireless_dev.state != enums.DeviceState.UNMANAGED:
+                    managed_interfaces.append(wireless_dev)
+        # Some WiFi chipsets expose a virtual p2p0 (WiFi-Direct) device
+        # alongside the real wlan0 adapter. NetworkManager deliberately
+        # leaves p2p0 unmanaged, so it can never actually be controlled
+        # here - if it gets picked as "the" wireless interface instead
+        # of the real, usable one, that produces a false "not managed by
+        # NetworkManager" error even though a perfectly good managed
+        # adapter is also present. Prefer managed devices to avoid that.
+        # But if EVERY WiFi device found is unmanaged (no p2p0-style
+        # false positive - genuinely nothing usable), fall back to
+        # returning them anyway so the caller's existing "not managed by
+        # NetworkManager" diagnostic still fires, instead of this
+        # silently reporting no WiFi hardware at all.
+        return managed_interfaces if managed_interfaces else wireless_interfaces
 
     def get_all_network_devices(self):
         devices = []

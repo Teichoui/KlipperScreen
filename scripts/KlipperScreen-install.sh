@@ -306,6 +306,7 @@ polkit.addRule(function(action, subject) {
          action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
          action.id == "org.freedesktop.login1.halt" ||
          action.id == "org.freedesktop.login1.halt-multiple-sessions" ||
+         action.id == "org.freedesktop.timedate1.set-timezone" ||
          action.id.startsWith("org.freedesktop.NetworkManager.")) &&
         subject.isInGroup("klipperscreen")) {
         return polkit.Result.YES;
@@ -326,6 +327,7 @@ Action=org.freedesktop.login1.power-off;
        org.freedesktop.login1.reboot-multiple-sessions;
        org.freedesktop.login1.halt;
        org.freedesktop.login1.halt-multiple-sessions;
+       org.freedesktop.timedate1.set-timezone;
        org.freedesktop.NetworkManager.*
 ResultAny=yes
 EOF
