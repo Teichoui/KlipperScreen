@@ -22,6 +22,7 @@ class Panel(ScreenPanel):
         super().__init__(screen, title)
         self.left_panel = None
         self.devices = {}
+        self._filtered = {}
         self.popover = Gtk.Popover(position=Gtk.PositionType.BOTTOM)
         self.popover_buttons = {}
         self.long_press = {}
@@ -153,7 +154,7 @@ class Panel(ScreenPanel):
                     target = max(target, 0)
                 if heater.startswith("extruder"):
                     self._screen._ws.api.set_tool_temp(
-                        self._printer.get_tool_number(heater), target
+                        self._printer.get_heater_tool_number(heater), target
                     )
                 elif heater.startswith("heater_bed"):
                     self._screen._ws.api.set_bed_temp(target)
@@ -273,7 +274,7 @@ class Panel(ScreenPanel):
                 if heater.startswith("extruder"):
                     if self.validate(heater, target, max_temp):
                         self._screen._ws.api.set_tool_temp(
-                            self._printer.get_tool_number(heater), target
+                            self._printer.get_heater_tool_number(heater), target
                         )
                 elif heater.startswith("heater_bed"):
                     if target is None:
@@ -349,6 +350,7 @@ class Panel(ScreenPanel):
             class_name = f"graph_label_fan_{self.f}"
             dev_type = "fan"
         elif self._config.get_main_config().getboolean("only_heaters", False):
+            self._filtered[device] = True
             return False
         else:
             self.h += 1
@@ -448,7 +450,7 @@ class Panel(ScreenPanel):
 
         if self.active_heater.startswith("extruder"):
             self._screen._ws.api.set_tool_temp(
-                self._printer.get_tool_number(self.active_heater), temp
+                self._printer.get_heater_tool_number(self.active_heater), temp
             )
         elif self.active_heater == "heater_bed":
             self._screen._ws.api.set_bed_temp(temp)
@@ -481,6 +483,22 @@ class Panel(ScreenPanel):
             self._screen._confirm_send_action(
                 None,
                 _("Initiate a PID calibration for:")
+                + f" {heater} @ {temp} ºC"
+                + "\n\n"
+                + _("It may take more than 5 minutes depending on the heater power."),
+                "printer.gcode.script",
+                script,
+            )
+
+    def mpc_calibrate(self, temp):
+        if temp <= 0:
+            return
+        heater = self.active_heater.split(" ", maxsplit=1)[-1]
+        if self.verify_max_temp(temp):
+            script = {"script": f"MPC_CALIBRATE HEATER={heater} TARGET={temp}"}
+            self._screen._confirm_send_action(
+                None,
+                _("Initiate an MPC calibration for:")
                 + f" {heater} @ {temp} ºC"
                 + "\n\n"
                 + _("It may take more than 5 minutes depending on the heater power."),
@@ -577,8 +595,10 @@ class Panel(ScreenPanel):
         for device in self._printer.get_temp_devices():
             if device not in data:
                 continue
+            if device in self._filtered:
+                continue
             if device not in self.devices and not self.add_device(device):
-                return
+                continue
             self.update_temp(
                 device,
                 self._printer.get_stat(device, "temperature"),
@@ -600,15 +620,21 @@ class Panel(ScreenPanel):
                 self.hide_numpad,
                 error_msg=_("Invalid temperature"),
             )
-        if (
-            self._printer.state not in ("printing", "paused")
-            and self._screen.printer.config[self.active_heater]["control"] == "pid"
-        ):
-            self.labels["keypad"].add_extra_button(
-                self.pid_calibrate,
-                icon="heat-up",
-                label=_("Calibrate") + " PID",
-            )
+        self.labels["keypad"].remove_extra_button()
+        if self._printer.state not in ("printing", "paused"):
+            control = self._screen.printer.config[self.active_heater]["control"]
+            if control == "pid":
+                self.labels["keypad"].add_extra_button(
+                    self.pid_calibrate,
+                    icon="heat-up",
+                    label=_("Calibrate") + " PID",
+                )
+            elif control == "mpc":
+                self.labels["keypad"].add_extra_button(
+                    self.mpc_calibrate,
+                    icon="heat-up",
+                    label=_("Calibrate") + " MPC",
+                )
         self.labels["keypad"].clear()
 
         if self._screen.vertical_mode:

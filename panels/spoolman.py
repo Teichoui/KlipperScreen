@@ -20,6 +20,8 @@ except ImportError:
 
 
 def format_date(date):
+    if not date:
+        return ""
     if date.endswith("Z"):
         date = f"{date[:-1]}+00:00"
 
@@ -81,6 +83,7 @@ class SpoolmanFilament:
 class SpoolmanSpool(GObject.GObject):
     archived: bool
     id: int
+    price: float = None
     remaining_length: float
     remaining_weight: float
     used_length: float
@@ -280,8 +283,11 @@ class Panel(ScreenPanel):
         text_renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
         pixbuf_renderer = Gtk.CellRendererPixbuf(xpad=5, ypad=5)
         checkbox_renderer = Gtk.CellRendererToggle()
-        column_id = Gtk.TreeViewColumn(cell_renderer=text_renderer)
-        column_id.set_cell_data_func(text_renderer, self._set_cell_id)
+        # Ensure id column does not ellipsize text
+        id_renderer = Gtk.CellRendererText()
+
+        column_id = Gtk.TreeViewColumn(cell_renderer=id_renderer)
+        column_id.set_cell_data_func(id_renderer, self._set_cell_id)
         column_id.set_sort_column_id(0)
 
         column_icon = Gtk.TreeViewColumn(cell_renderer=pixbuf_renderer)
@@ -409,6 +415,11 @@ class Panel(ScreenPanel):
             result += f"{_('Comment')}:<b> {spool.comment}</b>\n"
         if spool.last_used:
             result += f"{_('Used')}:<b> {spool.last_used.astimezone():{self.timeFormat}}</b>\n"
+        price = getattr(spool, "price", None)
+        if price is None and getattr(spool.filament, "price", None) is not None:
+            price = spool.filament.price
+        if price is not None:
+            result += f"{_('Price')}: <b>{float(price):.2f}</b>\n"
         if hasattr(spool, "remaining_weight"):
             result += f"{_('Remaining weight')}: <b>{round(spool.remaining_weight, 2)} g</b>\n"
         if hasattr(spool, "remaining_length"):

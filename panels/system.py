@@ -26,17 +26,32 @@ class Panel(ScreenPanel):
         self._activation_id = 0
 
         self.sysinfo = screen.printer.system_info
-        if not self.sysinfo:
-            logging.debug("Asking for info")
-            self.sysinfo = screen.restApi.send_request("machine/system_info")
-            if "system_info" in self.sysinfo:
-                screen.printer.system_info = self.sysinfo["system_info"]
-                self.sysinfo = self.sysinfo["system_info"]
 
         if self.sysinfo:
             self.create_layout()
         else:
-            self.content.add(Gtk.Label(label=_("No info available"), vexpand=True))
+            # This panel is reachable once Moonraker is connected, before Klipper
+            # finishes initializing, which is when screen.py normally fetches this
+            self.placeholder = Gtk.Label(label=_("No info available"), vexpand=True)
+            self.content.add(self.placeholder)
+            self._screen._ws.api.get_system_info(self._on_system_info)
+
+    def _on_system_info(self, data, method, params):
+        if "error" in data:
+            error_msg = data["error"].get("message", "Unknown error")
+            logging.error(f"Error getting system info: {error_msg}")
+            return
+        info = data.get("result", {}).get("system_info")
+        if not info or self.sysinfo:
+            return
+        self.sysinfo = info
+        self._screen.printer.system_info = info
+        if self.placeholder.get_parent() is self.content:
+            self.content.remove(self.placeholder)
+        self.create_layout()
+        self.content.show_all()
+        if self._screen._cur_panels and self._screen._cur_panels[-1] == "system":
+            self.activate()
 
     def back(self):
         if not self.sysinfo:
@@ -44,6 +59,8 @@ class Panel(ScreenPanel):
         return False
 
     def activate(self):
+        if not self.sysinfo:
+            return
         self._activation_id += 1
         self._current_activation = self._activation_id
         self._roots_pending = 0

@@ -18,17 +18,17 @@ class KlippyUDS(threading.Thread):
     _req_id = 0
     connected = False
     connecting = False
-    callback_table = {}
+    _lock = threading.Lock()
 
-    def __init__(self, callback, socket_path, port=None, api_key="", path="", ssl=None):
+    def __init__(self, callback, socket_path, port=None, path="", ssl=None):
         threading.Thread.__init__(self)
         self._wst = None
         self._callback = callback
         self.api = MoonrakerApi(self)
+        self.callback_table = {}
         self.sock = None
         self.closing = False
         self.socket_path = os.path.expanduser(socket_path)
-        self.api_key = api_key
         self._buffer = b""
         self._delimiter = "\x03"
 
@@ -71,6 +71,7 @@ class KlippyUDS(threading.Thread):
         logging.debug("Closing UDS connection")
         self.closing = True
         self.connecting = False
+        self.callback_table.clear()
         if self.sock is not None:
             try:
                 self.sock.close()
@@ -98,6 +99,7 @@ class KlippyUDS(threading.Thread):
 
         self.connected = False
         self.connecting = False
+        self.callback_table.clear()
         if "on_close" in self._callback:
             GLib.idle_add(
                 self._callback["on_close"], "Connection closed", priority=GLib.PRIORITY_HIGH_IDLE
@@ -111,18 +113,12 @@ class KlippyUDS(threading.Thread):
             return
 
         if "id" in response and response["id"] in self.callback_table:
-            args = (
-                response,
-                self.callback_table[response["id"]][1],
-                self.callback_table[response["id"]][2],
-                *self.callback_table[response["id"]][3],
-            )
-            GLib.idle_add(
-                self.callback_table[response["id"]][0],
-                *args,
-                priority=GLib.PRIORITY_HIGH_IDLE,
-            )
-            self.callback_table.pop(response["id"])
+            with self._lock:
+                entry = self.callback_table.pop(response["id"], None)
+            if entry is not None:
+                callback, method, params, extra = entry
+                args = (response, method, params, *extra)
+                GLib.idle_add(callback, *args, priority=GLib.PRIORITY_HIGH_IDLE)
             return
 
         if "method" in response and "on_message" in self._callback:
@@ -138,11 +134,13 @@ class KlippyUDS(threading.Thread):
         if params is None:
             params = {}
 
-        self._req_id += 1
-        if callback is not None:
-            self.callback_table[self._req_id] = [callback, method, params, [*args]]
+        with self._lock:
+            self._req_id += 1
+            req_id = self._req_id
+            if callback is not None:
+                self.callback_table[req_id] = [callback, method, params, [*args]]
 
-        data = {"jsonrpc": "2.0", "method": method, "params": params, "id": self._req_id}
+        data = {"jsonrpc": "2.0", "method": method, "params": params, "id": req_id}
         message = json.dumps(data) + self._delimiter
         try:
             self.sock.sendall(message.encode("utf-8"))

@@ -12,7 +12,7 @@ class Keypad(Gtk.Box):
         self._gtk = screen.gtk
         self.ok_cb = ok_cb
         self.error_msg = error_msg
-        self.has_extra_button = False
+        self._extra_button = None
 
         # Header: Entry + Close
         self.entry = Gtk.Entry(hexpand=True, xalign=0.5, max_length=entry_max)
@@ -78,9 +78,8 @@ class Keypad(Gtk.Box):
         return grid
 
     def add_extra_button(self, callback, icon=None, label=""):
-        if self.has_extra_button:
-            return
-        self.has_extra_button = True
+        # The keypad is reused, so a new button must replace the previous one
+        self.remove_extra_button()
         btn = self._gtk.Button(
             icon, label, "color2", self._gtk.bsidescale, Gtk.PositionType.LEFT, 1
         )
@@ -88,7 +87,13 @@ class Keypad(Gtk.Box):
         self.action_box.pack_start(btn, True, True, 0)
         btn.set_vexpand(False)
         self.action_box.show_all()
+        self._extra_button = btn
         return btn
+
+    def remove_extra_button(self):
+        if self._extra_button is not None:
+            self._extra_button.destroy()
+            self._extra_button = None
 
     def _handle_extra_action(self, callback):
         value = self.get_value() or 0

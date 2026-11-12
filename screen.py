@@ -27,7 +27,6 @@ from ks_includes import functions
 from ks_includes.config import KlipperScreenConfig
 from ks_includes.files import KlippyFiles
 from ks_includes.KlippyGtk import KlippyGtk
-from ks_includes.KlippyRest import KlippyRest
 from ks_includes.KlippyUDS import KlippyUDS
 from ks_includes.KlippyWebsocket import KlippyWebsocket
 from ks_includes.notification_handler import NotificationHandler
@@ -75,7 +74,6 @@ class KlipperScreen(Gtk.ApplicationWindow):
         self.files = None
         self.printer = None
         self.printers = None
-        self.restApi = None
         self._ws = None
 
         self.keyboard = None
@@ -188,6 +186,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
         autolock = self._config.get_main_config().getint("autolock_timeout", fallback=0)
         self.lock_screen.set_autolock_timeout(autolock)
         self.log_notification("KlipperScreen Started", 1)
+        self._load_addons()
         self.initial_connection()
         if self._config.get_main_config().getboolean("start_locked", False):
             self.lock_screen.lock(None)
@@ -260,13 +259,20 @@ class KlipperScreen(Gtk.ApplicationWindow):
         is_uds = moonraker_host.startswith(("/", "~"))
         rest_host = "localhost" if is_uds else moonraker_host
 
-        self.restApi = KlippyRest(
-            rest_host,
-            self.printers[ind][name]["moonraker_port"],
-            self.printers[ind][name]["moonraker_api_key"],
-            self.printers[ind][name]["moonraker_path"],
-            self.printers[ind][name]["moonraker_ssl"],
+        moonraker_port = self.printers[ind][name]["moonraker_port"]
+        moonraker_path = self.printers[ind][name]["moonraker_path"]
+        moonraker_ssl = self.printers[ind][name]["moonraker_ssl"]
+        if moonraker_ssl is None:
+            moonraker_ssl = int(moonraker_port) in {443, 7130}
+
+        self.moonraker_endpoint = (
+            f"{'https' if moonraker_ssl else 'http'}://{rest_host}:{moonraker_port}"
         )
+        if moonraker_path:
+            self.moonraker_endpoint += f"/{moonraker_path}"
+        self.moonraker_api_key = self.printers[ind][name]["moonraker_api_key"]
+        if self.moonraker_api_key == "False":
+            self.moonraker_api_key = ""
         self._notification_handler = NotificationHandler(self)
         self.state.printer_is_local = is_uds or moonraker_host in ("localhost", "127.0.0.1")
 
@@ -281,7 +287,6 @@ class KlipperScreen(Gtk.ApplicationWindow):
                 },
                 moonraker_host,
                 self.printers[ind][name]["moonraker_port"],
-                self.printers[ind][name]["moonraker_api_key"],
                 self.printers[ind][name]["moonraker_path"],
             )
         else:
@@ -294,7 +299,6 @@ class KlipperScreen(Gtk.ApplicationWindow):
                 },
                 moonraker_host,
                 self.printers[ind][name]["moonraker_port"],
-                self.printers[ind][name]["moonraker_api_key"],
                 self.printers[ind][name]["moonraker_path"],
                 self.printers[ind][name]["moonraker_ssl"],
             )
@@ -505,6 +509,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
             halign=Gtk.Align.CENTER,
             width_request=int(self.width * 0.9),
         )
+        popup.set_modal(False)
         popup.get_style_context().add_class("message_popup_popover")
         popup.add(msg)
         popup.popup()
@@ -837,7 +842,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
 
     def socket_connected(self):
         self.printer_initializing(_("Moonraker Connected"))
-        self._ws.api.identify_client(functions.get_software_version(), self._ws.api_key)
+        self._ws.api.identify_client(functions.get_software_version(), self.moonraker_api_key)
         self.state.reinit_count = 0
         self.state.klippy_retry_count = 0
         self.last_error = ""
@@ -860,7 +865,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
             self.panels["printer_select"].disconnected_callback()
             self.state.connecting = False
             return
-        if self._cur_panels and self._cur_panels[-1] not in ("splash_screen", "main_panel"):
+        if self._cur_panels and self._cur_panels[-1] not in ("splash_screen", "main_menu"):
             # Any panel the user has deliberately navigated to (network
             # settings, system info, menus, etc.) shouldn't get yanked away
             # just because the Klipper/Moonraker connection cycles in the
@@ -912,6 +917,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
             self.show_panel("extrude")
 
     def state_printing(self):
+        self.base_panel.close_update_dialog(force=True)
         self.show_panel("job_status", remove_all=True)
 
     def state_ready(self, wait=True):
@@ -1003,9 +1009,81 @@ class KlipperScreen(Gtk.ApplicationWindow):
             key = key.strip()
             value = value.strip()
             params = {key: ast.literal_eval(value)}
+            if key == "panel_name":
+                # panel_name is the key into self.panels; an arbitrary value
+                # from a macro would grow it without bound. Reject it.
+                logging.warning("Ignoring panel_name in ks_show action for panel '%s'", panel)
+                return
             self.show_panel(panel, **params)
         else:
             self.show_panel(*action)
+
+    def _load_addons(self):
+        """Import each addons/<name> once at startup and call init(screen).
+
+        process_update only reaches the panel on screen, so an add-on has
+        nowhere else to run. Moonraker is deliberately not connected yet:
+        this is where an add-on registers, before the first update arrives.
+
+        Off unless enable_addons is set, since this runs code that did not
+        come from this project. A broken one must never stop KlipperScreen
+        starting, and must not fail quietly either -- this screen usually
+        has no keyboard and nobody reads the log.
+        """
+        if not self._config.get_main_config().getboolean("enable_addons", False):
+            return
+
+        import importlib
+        import types
+
+        addon_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "addons")
+        if not os.path.isdir(addon_dir):
+            return
+
+        # A private parent package rather than sys.path: addons/json.py becomes
+        # ks_addons.json and cannot shadow the standard library. Giving it a
+        # __path__ lets import_module take a single file or a package directory
+        # alike, so relative imports inside a package work normally.
+        parent = types.ModuleType("ks_addons")
+        parent.__path__ = [addon_dir]
+        sys.modules["ks_addons"] = parent
+
+        names = sorted(
+            {
+                entry[:-3] if entry.endswith(".py") else entry
+                for entry in os.listdir(addon_dir)
+                if not entry.startswith("_")
+                and (
+                    entry.endswith(".py")
+                    or os.path.isfile(os.path.join(addon_dir, entry, "__init__.py"))
+                )
+            }
+        )
+        loaded, failed = [], []
+        for name in names:
+            try:
+                init = getattr(importlib.import_module(f"ks_addons.{name}"), "init", None)
+                if callable(init):
+                    init(self)
+                # Recorded even without init(): it has still run.
+                loaded.append(name)
+                logging.info(f"Addon loaded: {name}")
+            except Exception:
+                failed.append(name)
+                logging.exception(f"Failed to load addon {name}")
+        if loaded:
+            self.log_notification(
+                ngettext("Add-on loaded", "Add-ons loaded", len(loaded)) + f": {', '.join(loaded)}",
+                1,
+            )
+        if failed:
+            # One popup for all: each call closes the last. It logs the
+            # notification itself, so this is one call and not two.
+            self.show_popup_message(
+                ngettext("Add-on failed to load", "Add-ons failed to load", len(failed))
+                + f": {', '.join(failed)}",
+                3,
+            )
 
     def process_update(self, *args):
         self.base_panel.process_update(*args)
@@ -1036,7 +1114,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
         zoffset = float(offset[2]) if offset else 0
         if zoffset != 0:
             sign = "+" if zoffset > 0 else "-"
-            msg = f"Apply {sign}{abs(zoffset)} offset?"
+            msg = f"Apply {sign}{abs(zoffset):.3f} offset?"
             zlabel = Gtk.Label(label=msg, hexpand=True, vexpand=True, wrap=True)
             zlabel.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
             grid.attach(zlabel, 0, 1, 2, 1)
@@ -1136,10 +1214,14 @@ class KlipperScreen(Gtk.ApplicationWindow):
         return found_devices
 
     def power_devices(self, widget=None, devices=None, on=False):
+        if not self._ws:
+            return
         devs = self.search_power_devices(devices)
         if on:
+            self.log_notification(_("Powering on:") + f" {devices}")
             self._ws.api.power_device_on(devs)
         else:
+            self.log_notification(_("Powering off:") + f" {devices}")
             self._ws.api.power_device_off(devs)
 
     def _init_printer(self, msg, go_to_splash=False):
@@ -1157,7 +1239,9 @@ class KlipperScreen(Gtk.ApplicationWindow):
         # defeat the backoff entirely and hammer reconnects with no delay.
         # Track whether we've EVER attempted a connection this session
         # instead, so only the true first attempt skips the wait.
-        first_try = self.state.reinit_count == 0 and not getattr(self, "_ks_attempted_connect", False)
+        first_try = self.state.reinit_count == 0 and not getattr(
+            self, "_ks_attempted_connect", False
+        )
         self._ks_attempted_connect = True
         self.state.reinit_count += 1
         if self._ws.connected and not self._ws.closing:
@@ -1216,17 +1300,24 @@ class KlipperScreen(Gtk.ApplicationWindow):
             self.show_popup_message(popup, level)
         if "power" in self.server_info["components"]:
             self._ws.api.get_power_devices(self.set_power_devices)
+        else:
+            self.init_klipper()
         if "webcam" in self.server_info["components"]:
             self._ws.api.list_webcams(self.set_cameras)
         if "spoolman" in self.server_info["components"]:
             self.printer.enable_spoolman()
-        self.init_klipper()
 
     def set_power_devices(self, data, method, params):
-        self.printer.configure_power_devices(data["result"])
-        screen_on_devices = self._config.get_main_config().get("screen_on_devices", "")
-        if screen_on_devices:
-            self.power_devices(widget=None, devices=screen_on_devices, on=True)
+        if "error" in data:
+            logging.error(
+                f"Error getting power devices: {data['error'].get('message', 'Unknown error')}"
+            )
+        else:
+            self.printer.configure_power_devices(data["result"])
+            screen_on_devices = self._config.get_main_config().get("screen_on_devices", "")
+            if screen_on_devices:
+                self.power_devices(widget=None, devices=screen_on_devices, on=True)
+        self.init_klipper()
 
     def set_cameras(self, data, method, params):
         self.printer.configure_cameras(data["result"]["webcams"])
@@ -1480,6 +1571,9 @@ class KlipperScreenApplication(Gtk.Application):
 
     @staticmethod
     def _on_destroy(win):
+        if win.check_dpms_timeout is not None:
+            GLib.source_remove(win.check_dpms_timeout)
+            win.check_dpms_timeout = None
         win.gtk.shutdown()
 
 
