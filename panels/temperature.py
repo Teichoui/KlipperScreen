@@ -620,24 +620,21 @@ class Panel(ScreenPanel):
                 self.hide_numpad,
                 error_msg=_("Invalid temperature"),
             )
-        if (
-            self._printer.state not in ("printing", "paused")
-            and self._screen.printer.config[self.active_heater]["control"] == "pid"
-        ):
-            self.labels["keypad"].add_extra_button(
-                self.pid_calibrate,
-                icon="heat-up",
-                label=_("Calibrate") + " PID",
-            )
-        if (
-            self._printer.state not in ("printing", "paused")
-            and self._screen.printer.config[self.active_heater]["control"] == "mpc"
-        ):
-            self.labels["keypad"].add_extra_button(
-                self.mpc_calibrate,
-                icon="heat-up",
-                label=_("Calibrate") + " MPC",
-            )
+        self.labels["keypad"].remove_extra_button()
+        if self._printer.state not in ("printing", "paused"):
+            control = self._screen.printer.config[self.active_heater]["control"]
+            if control == "pid":
+                self.labels["keypad"].add_extra_button(
+                    self.pid_calibrate,
+                    icon="heat-up",
+                    label=_("Calibrate") + " PID",
+                )
+            elif control == "mpc":
+                self.labels["keypad"].add_extra_button(
+                    self.mpc_calibrate,
+                    icon="heat-up",
+                    label=_("Calibrate") + " MPC",
+                )
         self.labels["keypad"].clear()
 
         if self._screen.vertical_mode:
