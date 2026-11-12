@@ -160,11 +160,10 @@ class Panel(ScreenPanel):
         self._gtk.Dialog(_("Timezone"), buttons, box, self.timezone_dialog_response, combo)
 
     def timezone_dialog_response(self, dialog, response_id, combo):
-        self._gtk.remove_dialog(dialog)
-        if response_id != Gtk.ResponseType.OK:
-            return
+        # Destroying the dialog destroys the combo and clears its selection
         tz = combo.get_active_text()
-        if not tz:
+        self._gtk.remove_dialog(dialog)
+        if response_id != Gtk.ResponseType.OK or not tz:
             return
         ret, err = set_timezone(tz)
         if ret != 0:
