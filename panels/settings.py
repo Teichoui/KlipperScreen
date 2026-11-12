@@ -83,7 +83,10 @@ class Panel(ScreenPanel):
             self.langs[lang] = {
                 "name": name,
                 "type": "button",
-                "callback": self._screen.change_language,
+                # add_option calls this with the display name, change_language needs the code
+                "callback": lambda widget, _name, lang=lang: self._screen.change_language(
+                    widget, lang
+                ),
             }
             self.add_option("lang", self.langs, lang, self.langs[lang])
 
