@@ -1239,7 +1239,9 @@ class KlipperScreen(Gtk.ApplicationWindow):
         # defeat the backoff entirely and hammer reconnects with no delay.
         # Track whether we've EVER attempted a connection this session
         # instead, so only the true first attempt skips the wait.
-        first_try = self.state.reinit_count == 0 and not getattr(self, "_ks_attempted_connect", False)
+        first_try = self.state.reinit_count == 0 and not getattr(
+            self, "_ks_attempted_connect", False
+        )
         self._ks_attempted_connect = True
         self.state.reinit_count += 1
         if self._ws.connected and not self._ws.closing:
