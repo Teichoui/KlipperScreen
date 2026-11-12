@@ -122,16 +122,19 @@ class SdbusNm:
     def get_interfaces(self):
         return [NetworkDeviceGeneric(device).interface for device in self.nm.get_devices()]
 
-    def get_wireless_interfaces(self):
+    def _all_wireless_interfaces(self):
         wireless_interfaces = []
-        managed_interfaces = []
         for path in self.nm.get_devices():
             dev = NetworkDeviceGeneric(path)
             if dev.device_type == enums.DeviceType.WIFI:
-                wireless_dev = NetworkDeviceWireless(path)
-                wireless_interfaces.append(wireless_dev)
-                if wireless_dev.state != enums.DeviceState.UNMANAGED:
-                    managed_interfaces.append(wireless_dev)
+                wireless_interfaces.append(NetworkDeviceWireless(path))
+        return wireless_interfaces
+
+    def get_wireless_interfaces(self):
+        wireless_interfaces = self._all_wireless_interfaces()
+        managed_interfaces = [
+            dev for dev in wireless_interfaces if dev.state != enums.DeviceState.UNMANAGED
+        ]
         # Some WiFi chipsets expose a virtual p2p0 (WiFi-Direct) device
         # alongside the real wlan0 adapter. NetworkManager deliberately
         # leaves p2p0 unmanaged, so it can never actually be controlled
@@ -177,7 +180,9 @@ class SdbusNm:
     def set_selected_interface(self, iface):
         dev = next((d for d in self.get_all_network_devices() if d["interface"] == iface), None)
         if dev and dev["type"] == enums.DeviceType.WIFI:
-            for wireless in self.get_wireless_interfaces():
+            # Unfiltered: get_wireless_interfaces() hides unmanaged devices (p2p0)
+            # that the interface dropdown still lists and that need this warning
+            for wireless in self._all_wireless_interfaces():
                 if wireless.interface == iface and wireless.state == enums.DeviceState.UNMANAGED:
                     self.popup(
                         f"{iface} is not managed by "
