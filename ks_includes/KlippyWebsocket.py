@@ -17,7 +17,7 @@ class KlippyWebsocket(threading.Thread):
     _req_id = 0
     connected = False
     connecting = False
-    callback_table = {}
+    _lock = threading.Lock()
 
     @staticmethod
     def _format_error(error):
@@ -53,14 +53,13 @@ class KlippyWebsocket(threading.Thread):
         self.ws_url = None
         self._callback = callback
         self.api = MoonrakerApi(self)
+        self.callback_table = {}
         self.ws = None
         self.closing = False
         self.host = host
         self.port = port
         self.path = f"/{path}" if path else ""
         self.ssl = int(self.port) in {443, 7130} if ssl is None else bool(ssl)
-        self.header = {"x-api-key": api_key} if api_key else {}
-        self.api_key = api_key
 
     @property
     def _url(self):
@@ -82,14 +81,14 @@ class KlippyWebsocket(threading.Thread):
         self.connecting = True
         logging.debug("Attempting to connect")
 
-        self.ws_url = f"{self.ws_proto}://{self._url}/websocket?token={self.api_key}"
+        self.ws_url = f"{self.ws_proto}://{self._url}/websocket"
         self.ws = websocket.WebSocketApp(
             self.ws_url,
+            header=["User-Agent: KlipperScreen"],
             on_close=self.on_close,
             on_error=self.on_error,
             on_message=self.on_message,
             on_open=self.on_open,
-            header=self.header,
         )
         self._wst = threading.Thread(target=self.ws.run_forever, daemon=True)
         try:
@@ -104,6 +103,7 @@ class KlippyWebsocket(threading.Thread):
         logging.debug("Closing websocket")
         self.closing = True
         self.connecting = False
+        self.callback_table.clear()
         if self.ws is not None:
             self.ws.keep_running = False
             self.ws.close()
@@ -112,16 +112,12 @@ class KlippyWebsocket(threading.Thread):
         message = args[1] if len(args) == 2 else args[0]
         response = json.loads(message)
         if "id" in response and response["id"] in self.callback_table:
-            args = (
-                response,
-                self.callback_table[response["id"]][1],
-                self.callback_table[response["id"]][2],
-                *self.callback_table[response["id"]][3],
-            )
-            GLib.idle_add(
-                self.callback_table[response["id"]][0], *args, priority=GLib.PRIORITY_HIGH_IDLE
-            )
-            self.callback_table.pop(response["id"])
+            with self._lock:
+                entry = self.callback_table.pop(response["id"], None)
+            if entry is not None:
+                callback, method, params, extra = entry
+                args = (response, method, params, *extra)
+                GLib.idle_add(callback, *args, priority=GLib.PRIORITY_HIGH_IDLE)
             return
 
         if "method" in response and "on_message" in self._callback:
@@ -138,11 +134,13 @@ class KlippyWebsocket(threading.Thread):
         if params is None:
             params = {}
 
-        self._req_id += 1
-        if callback is not None:
-            self.callback_table[self._req_id] = [callback, method, params, [*args]]
+        with self._lock:
+            self._req_id += 1
+            req_id = self._req_id
+            if callback is not None:
+                self.callback_table[req_id] = [callback, method, params, [*args]]
 
-        data = {"jsonrpc": "2.0", "method": method, "params": params, "id": self._req_id}
+        data = {"jsonrpc": "2.0", "method": method, "params": params, "id": req_id}
         self.ws.send(json.dumps(data))
         return True
 
@@ -167,6 +165,7 @@ class KlippyWebsocket(threading.Thread):
         logging.info("Moonraker Websocket Closed")
         self.connected = False
         self.connecting = False
+        self.callback_table.clear()
 
     def on_error(self, *args):
         error = args[1] if len(args) == 2 else args[0]

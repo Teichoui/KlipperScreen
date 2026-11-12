@@ -126,6 +126,7 @@ class MoonrakerApi:
         }
         if api_key:
             params["api_key"] = api_key
+
         return self._ws.send_method("server.connection.identify", params)
 
     def query_server_info(self, callback=None, *args):

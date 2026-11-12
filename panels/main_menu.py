@@ -16,6 +16,7 @@ class Panel(MenuPanel):
         super().__init__(screen, title, items)
         self.left_panel = None
         self.devices = {}
+        self._filtered = {}
         self.graph_update = None
         self.active_heater = None
         self.h = self.f = 0
@@ -118,6 +119,7 @@ class Panel(MenuPanel):
             class_name = f"graph_label_fan_{self.f}"
             dev_type = "fan"
         elif self._config.get_main_config().getboolean("only_heaters", False):
+            self._filtered[device] = True
             return False
         else:
             self.h += 1
@@ -193,7 +195,7 @@ class Panel(MenuPanel):
 
         if self.active_heater.startswith("extruder"):
             self._screen._ws.api.set_tool_temp(
-                self._printer.get_tool_number(self.active_heater), temp
+                self._printer.get_heater_tool_number(self.active_heater), temp
             )
         elif self.active_heater == "heater_bed":
             self._screen._ws.api.set_bed_temp(temp)
@@ -226,6 +228,22 @@ class Panel(MenuPanel):
             self._screen._confirm_send_action(
                 None,
                 _("Initiate a PID calibration for:")
+                + f" {heater} @ {temp} ºC"
+                + "\n\n"
+                + _("It may take more than 5 minutes depending on the heater power."),
+                "printer.gcode.script",
+                script,
+            )
+
+    def mpc_calibrate(self, temp):
+        if temp <= 0:
+            return
+        heater = self.active_heater.split(" ", maxsplit=1)[-1]
+        if self.verify_max_temp(temp):
+            script = {"script": f"MPC_CALIBRATE HEATER={heater} TARGET={temp}"}
+            self._screen._confirm_send_action(
+                None,
+                _("Initiate an MPC calibration for:")
                 + f" {heater} @ {temp} ºC"
                 + "\n\n"
                 + _("It may take more than 5 minutes depending on the heater power."),
@@ -287,8 +305,10 @@ class Panel(MenuPanel):
         for device in self._printer.get_temp_devices():
             if device not in data:
                 continue
+            if device in self._filtered:
+                continue
             if device not in self.devices and not self.add_device(device):
-                return
+                continue
             self.update_temp(
                 device,
                 self._printer.get_stat(device, "temperature"),
@@ -319,6 +339,15 @@ class Panel(MenuPanel):
                 self.pid_calibrate,
                 icon="heat-up",
                 label=_("Calibrate") + " PID",
+            )
+        if (
+            self._printer.state not in ("printing", "paused")
+            and self._screen.printer.config[self.active_heater]["control"] == "mpc"
+        ):
+            self.labels["keypad"].add_extra_button(
+                self.mpc_calibrate,
+                icon="heat-up",
+                label=_("Calibrate") + " MPC",
             )
         self.labels["keypad"].clear()
 
