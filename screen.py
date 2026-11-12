@@ -865,7 +865,7 @@ class KlipperScreen(Gtk.ApplicationWindow):
             self.panels["printer_select"].disconnected_callback()
             self.state.connecting = False
             return
-        if self._cur_panels and self._cur_panels[-1] not in ("splash_screen", "main_panel"):
+        if self._cur_panels and self._cur_panels[-1] not in ("splash_screen", "main_menu"):
             # Any panel the user has deliberately navigated to (network
             # settings, system info, menus, etc.) shouldn't get yanked away
             # just because the Klipper/Moonraker connection cycles in the
