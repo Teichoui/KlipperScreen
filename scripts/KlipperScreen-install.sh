@@ -132,6 +132,8 @@ check_virtual_terminal()
             -e '/^TTYVHangup=/s/^/#/' \
             -e '/^TTYVTDisallocate=/s/^/#/' \
             "$service_file"; then
+            # install_systemd_service already reloaded before this edit, and restart does not re-read the unit
+            sudo systemctl daemon-reload
             echo_ok "Disabled VT-related configuration"
         else
             echo_error "Failed to disable VT-related configuration in '$service_file'"
