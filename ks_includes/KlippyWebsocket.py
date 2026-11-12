@@ -47,7 +47,7 @@ class KlippyWebsocket(threading.Thread):
             return f"Connection closed: {message}"
         return ""
 
-    def __init__(self, callback, host, port, api_key, path="", ssl=None):
+    def __init__(self, callback, host, port, path="", ssl=None):
         threading.Thread.__init__(self)
         self._wst = None
         self.ws_url = None
